@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 use presquile::apply;
 
 #[derive(Parser)]
@@ -20,7 +20,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Write chapter to mp3 id3V2 tags from Adobe Audition CSV file
-    Apply
+    Apply,
 }
 
 fn main() -> Result<()> {
