@@ -1,17 +1,23 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, ensure, Result};
+use csv::ReaderBuilder;
 use derive_new::new;
 use metadata::MediaFileMetadata;
+use model::AuditionCvsRecords;
 use std::path::PathBuf;
+
+mod model;
 
 #[derive(Debug)]
 pub enum AppliersErrors {
     AudioFileNotCompatible(String),
+    ChaptersFileNotCompatible,
 }
 
 impl std::fmt::Display for AppliersErrors {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AudioFileNotCompatible(data) => write!(f, "Invalid audio file format {}", data),
+            AppliersErrors::ChaptersFileNotCompatible => write!(f, "Invalid chapter file format"),
         }
     }
 }
@@ -28,13 +34,24 @@ struct Applier {
 
 impl Applier {
     fn apply(&self) -> Result<()> {
-        self.verify_mp3_file()?;
-        self.load_cvs()?;
+        let duration = self.verify_mp3_file()?;
+        let cvs = self.load_cvs()?;
         Ok(())
     }
 
-    fn load_cvs(&self) -> Result<()> {
-        Ok(())
+    fn load_cvs(&self) -> Result<AuditionCvsRecords> {
+        let mut rdr = ReaderBuilder::new()
+            .delimiter(b'\t')
+            .trim(csv::Trim::All)
+            .from_path(self.audition_cvs.as_path())?;
+
+        let (error, data): (Vec<_>, Vec<_>) = rdr.deserialize().partition(|line| line.is_err());
+        let data: AuditionCvsRecords = data.into_iter().map(|f| f.unwrap()).collect();
+        ensure!(
+            error.is_empty() && !data.is_empty(),
+            AppliersErrors::ChaptersFileNotCompatible
+        );
+        Ok(data)
     }
 
     fn verify_mp3_file(&self) -> Result<f64> {
@@ -65,33 +82,57 @@ mod tests {
     #[test]
     fn test_not_audio() {
         assert!(apply(
-            test_file!("valid_chaps.json").into(),
+            test_file!("valid_chaps.cvs").into(),
             test_file!("file.txt").into(),
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
-            None => false,
+            _ => false,
         }))
-    }
-
-    #[test]
-    fn test_mp3_audio() {
-        assert!(apply(
-            test_file!("valid_chaps.json").into(),
-            test_file!("audio.mp3").into()
-        )
-        .is_ok());
     }
 
     #[test]
     fn test_not_mp3_audio() {
         assert!(apply(
-            test_file!("valid_chaps.json").into(),
+            test_file!("valid_chaps.cvs").into(),
             test_file!("audio.ogg").into(),
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
-            None => false,
+            _ => false,
         }))
+    }
+
+    #[test]
+    fn test_not_cvs() {
+        assert!(apply(
+            test_file!("file.txt").into(),
+            test_file!("audio.mp3").into(),
+        )
+        .is_err_and(|e| match e.downcast_ref() {
+            Some(AppliersErrors::ChaptersFileNotCompatible) => true,
+            _ => false,
+        }))
+    }
+
+    #[test]
+    fn test_invalid_cvs() {
+        assert!(apply(
+            test_file!("invalid_chaps.cvs").into(),
+            test_file!("audio.mp3").into(),
+        )
+        .is_err_and(|e| match e.downcast_ref() {
+            Some(AppliersErrors::ChaptersFileNotCompatible) => true,
+            _ => false,
+        }))
+    }
+
+    #[test]
+    fn test_best_case() {
+        assert!(apply(
+            test_file!("valid_chaps.cvs").into(),
+            test_file!("audio.mp3").into()
+        )
+        .is_ok());
     }
 }
