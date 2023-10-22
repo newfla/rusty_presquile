@@ -1,8 +1,6 @@
-use std::path::PathBuf;
-
-use anyhow::Result;
 use clap::{Parser, Subcommand};
 use presquile::apply;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -23,9 +21,14 @@ enum Commands {
     Apply,
 }
 
-fn main() -> Result<()> {
+fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Apply => apply(cli.audition_cvs, cli.mp3_file),
+        Commands::Apply => {
+            match apply(cli.audition_cvs, cli.mp3_file) {
+                Ok(path) => println!("Chapters written to {:?}",path),
+                Err(err) => println!("Error \"{}\" occured",err),
+            }
+        }
     }
 }

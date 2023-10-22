@@ -1,28 +1,35 @@
 use anyhow::{bail, ensure, Result};
 use csv::ReaderBuilder;
 use derive_new::new;
+use id3::Version;
+use id3::{frame::Chapter, Frame, Tag, TagLike};
 use metadata::MediaFileMetadata;
 use model::AuditionCvsRecords;
+use std::fs::copy;
 use std::path::PathBuf;
 
 mod model;
+
+type Chapters = Vec<Chapter>;
 
 #[derive(Debug)]
 pub enum AppliersErrors {
     AudioFileNotCompatible(String),
     ChaptersFileNotCompatible,
+    CopyFileError,
 }
 
 impl std::fmt::Display for AppliersErrors {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AudioFileNotCompatible(data) => write!(f, "Invalid audio file format {}", data),
-            AppliersErrors::ChaptersFileNotCompatible => write!(f, "Invalid chapter file format"),
+            Self::ChaptersFileNotCompatible => write!(f, "Invalid chapter file format"),
+            Self::CopyFileError => write!(f, "Error while copying file"),
         }
     }
 }
 
-pub fn apply(audition_cvs: PathBuf, mp3_file: PathBuf) -> Result<()> {
+pub fn apply(audition_cvs: PathBuf, mp3_file: PathBuf) -> Result<PathBuf> {
     Applier::new(audition_cvs, mp3_file).apply()
 }
 
@@ -33,10 +40,83 @@ struct Applier {
 }
 
 impl Applier {
-    fn apply(&self) -> Result<()> {
+    fn apply(&self) -> Result<PathBuf> {
         let duration = self.verify_mp3_file()?;
         let cvs = self.load_cvs()?;
-        Ok(())
+        let mut tag = Tag::new();
+        Self::build_chapters(cvs, duration)
+            .iter()
+            .for_each(|chapter| {
+                tag.add_frame(chapter.clone());
+            });
+        let new_mp3_file = self.copy_file()?;
+        tag.write_to_path(new_mp3_file.clone(), Version::Id3v24)?;
+        Ok(new_mp3_file)
+    }
+
+    fn copy_file(&self) -> Result<PathBuf> {
+        let file_name = self.mp3_file.file_stem();
+        ensure!(file_name.is_some(), AppliersErrors::CopyFileError);
+        let file_name = file_name.unwrap().to_str();
+        ensure!(file_name.is_some(), AppliersErrors::CopyFileError);
+        let new_mp3_file = self
+            .mp3_file
+            .with_file_name(file_name.unwrap().to_owned() + "_enriched.mp3");
+        copy(self.mp3_file.clone(), new_mp3_file.clone())?;
+        Ok(new_mp3_file)
+    }
+
+    fn convert_time(time: &str) -> u32 {
+        let mut values = [0u32; 4];
+        let multipliers = [60 * 60 * 1000u32, 60 * 1000, 1000, 1];
+
+        let (hh_mm_ss, milliseconds) = time.split_once('.').unwrap();
+        let mut hh_mm_ss = hh_mm_ss.split(':');
+
+        if hh_mm_ss.clone().count() == 2 {
+            values[1] = hh_mm_ss.next().unwrap().parse().unwrap();
+            values[2] = hh_mm_ss.next().unwrap().parse().unwrap();
+        } else {
+            values[0] = hh_mm_ss.next().unwrap().parse().unwrap();
+            values[1] = hh_mm_ss.next().unwrap().parse().unwrap();
+            values[2] = hh_mm_ss.next().unwrap().parse().unwrap();
+        }
+        values[3] = milliseconds.parse().unwrap();
+
+        values
+            .iter()
+            .zip(multipliers.iter())
+            .map(|(value, multiplier)| value * multiplier)
+            .sum()
+    }
+
+    fn convert_end_time(id: usize, duration: f64, records: &AuditionCvsRecords) -> u32 {
+        if id < records.len() - 1 {
+            Self::convert_time(&records[id + 1].start)
+        } else {
+            duration as u32
+        }
+    }
+
+    fn build_chapters(records: AuditionCvsRecords, duration: f64) -> Chapters {
+        records
+            .iter()
+            .enumerate()
+            .map(|(id, record)| {
+                (
+                    id,
+                    Chapter {
+                        element_id: id.to_string(),
+                        start_time: Self::convert_time(&record.start),
+                        end_time: Self::convert_end_time(id, duration, &records),
+                        start_offset: 0,
+                        end_offset: 0,
+                        frames: vec![Frame::text("TIT2", record.name.clone()); 1],
+                    },
+                )
+            })
+            .map(|data| data.1)
+            .collect()
     }
 
     fn load_cvs(&self) -> Result<AuditionCvsRecords> {
@@ -51,13 +131,20 @@ impl Applier {
             error.is_empty() && !data.is_empty(),
             AppliersErrors::ChaptersFileNotCompatible
         );
+
+        for record in data.iter() {
+            ensure!(
+                record.start.contains(':') && record.start.contains('.'),
+                AppliersErrors::ChaptersFileNotCompatible
+            );
+        }
         Ok(data)
     }
 
     fn verify_mp3_file(&self) -> Result<f64> {
         match MediaFileMetadata::new(&self.mp3_file) {
             Ok(metadata) => match metadata.container_format.as_str() {
-                "MP3" => Ok(metadata._duration.unwrap()),
+                "MP3" => Ok(metadata._duration.unwrap() * 1000f64),
                 _ => bail!(AppliersErrors::AudioFileNotCompatible(
                     metadata.container_format
                 )),
@@ -71,6 +158,8 @@ impl Applier {
 
 #[cfg(test)]
 mod tests {
+    use id3::Tag;
+
     use crate::{apply, AppliersErrors};
 
     macro_rules! test_file {
@@ -129,10 +218,17 @@ mod tests {
 
     #[test]
     fn test_best_case() {
-        assert!(apply(
+        let new_mp3_file = apply(
             test_file!("valid_chaps.cvs").into(),
-            test_file!("audio.mp3").into()
-        )
-        .is_ok());
+            test_file!("audio.mp3").into(),
+        );
+        assert!(new_mp3_file.is_ok());
+
+        let tag = Tag::read_from_path(new_mp3_file.unwrap());
+        assert!(tag.is_ok());
+        let tag = tag.unwrap();
+        let chapters: Vec<_> = tag.chapters().collect();
+        assert!(!chapters.is_empty());
+        println!("{:?}", chapters);
     }
 }
