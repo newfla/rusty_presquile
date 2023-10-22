@@ -24,11 +24,9 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Apply => {
-            match apply(cli.audition_cvs, cli.mp3_file) {
-                Ok(path) => println!("Chapters written to {:?}",path),
-                Err(err) => println!("Error \"{}\" occured",err),
-            }
-        }
+        Commands::Apply => match apply(cli.audition_cvs, cli.mp3_file) {
+            Ok(path) => println!("Chapters written to {:?}", path),
+            Err(err) => println!("Error \"{}\" occured", err),
+        },
     }
 }
