@@ -163,8 +163,8 @@ mod tests {
     use crate::{apply, AppliersErrors};
 
     macro_rules! test_file {
-        ($fname:expr) => {
-            concat!(env!("CARGO_MANIFEST_DIR"), "/resources/test/", $fname)
+        ($file_name:expr) => {
+            concat!(env!("CARGO_MANIFEST_DIR"), "/resources/test/", $file_name)
         };
     }
 
