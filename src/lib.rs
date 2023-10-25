@@ -1,6 +1,7 @@
 use anyhow::{bail, ensure, Result};
 use csv::ReaderBuilder;
 use derive_new::new;
+use id3::frame::TableOfContents;
 use id3::Version;
 use id3::{frame::Chapter, Frame, Tag, TagLike};
 use metadata::MediaFileMetadata;
@@ -44,11 +45,20 @@ impl Applier {
         let duration = self.verify_mp3_file()?;
         let cvs = self.load_cvs()?;
         let mut tag = Tag::new();
+        let mut chapter_ids = Vec::new();
         Self::build_chapters(cvs, duration)
             .iter()
             .for_each(|chapter| {
                 tag.add_frame(chapter.clone());
+                chapter_ids.push(chapter.element_id.clone());
             });
+        tag.add_frame(TableOfContents {
+            element_id: "toc".to_string(),
+            top_level: true,
+            ordered: true,
+            elements: chapter_ids,
+            frames: vec![Frame::text("TIT2", "chapters-chapz".to_string()); 1],
+        });
         let new_mp3_file = self.copy_file()?;
         tag.write_to_path(new_mp3_file.clone(), Version::Id3v24)?;
         Ok(new_mp3_file)
@@ -227,8 +237,18 @@ mod tests {
         let tag = Tag::read_from_path(new_mp3_file.unwrap());
         assert!(tag.is_ok());
         let tag = tag.unwrap();
+
         let chapters: Vec<_> = tag.chapters().collect();
         assert!(!chapters.is_empty());
         println!("{:?}", chapters);
+
+        let ctocs: Vec<_> = tag.tables_of_contents().collect();
+        assert_eq!(ctocs.len(), 1);
+        println!("{:?}", ctocs);
+
+        chapters
+            .iter()
+            .zip(ctocs.last().unwrap().elements.iter())
+            .for_each(|(chap, chap_id)| assert_eq!(chap.element_id, *chap_id));
     }
 }
