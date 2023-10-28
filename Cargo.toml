@@ -12,4 +12,11 @@ id3 = "1.9.0"
 metadata = "0.1.8"
 serde = { version = "1.0.189", features = ["derive"] }
 
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+
 [workspace]
+
+[[bench]]
+name = "sample_bench"
+harness = false

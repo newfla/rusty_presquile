@@ -1,13 +1,13 @@
 use anyhow::{bail, ensure, Result};
 use csv::ReaderBuilder;
 use derive_new::new;
-use id3::frame::TableOfContents;
-use id3::Version;
-use id3::{frame::Chapter, Frame, Tag, TagLike};
+use id3::{
+    frame::{Chapter, TableOfContents},
+    Frame, Tag, TagLike, Version,
+};
 use metadata::MediaFileMetadata;
 use model::AuditionCvsRecords;
-use std::fs::copy;
-use std::path::PathBuf;
+use std::{fs::copy, path::PathBuf};
 
 mod model;
 
@@ -42,23 +42,9 @@ struct Applier {
 
 impl Applier {
     fn apply(&self) -> Result<PathBuf> {
-        let duration = self.verify_mp3_file()?;
         let cvs = self.load_cvs()?;
-        let mut tag = Tag::new();
-        let mut chapter_ids = Vec::new();
-        Self::build_chapters(cvs, duration)
-            .iter()
-            .for_each(|chapter| {
-                tag.add_frame(chapter.clone());
-                chapter_ids.push(chapter.element_id.clone());
-            });
-        tag.add_frame(TableOfContents {
-            element_id: "toc".to_string(),
-            top_level: true,
-            ordered: true,
-            elements: chapter_ids,
-            frames: vec![Frame::text("TIT2", "chapters-chapz".to_string()); 1],
-        });
+        let duration = self.verify_mp3_file()?;
+        let tag = Self::build_tag(cvs, duration);
         let new_mp3_file = self.copy_file()?;
         tag.write_to_path(new_mp3_file.clone(), Version::Id3v24)?;
         Ok(new_mp3_file)
@@ -67,12 +53,15 @@ impl Applier {
     fn copy_file(&self) -> Result<PathBuf> {
         let file_name = self.mp3_file.file_stem();
         ensure!(file_name.is_some(), AppliersErrors::CopyFileError);
+
         let file_name = file_name.unwrap().to_str();
         ensure!(file_name.is_some(), AppliersErrors::CopyFileError);
+
         let new_mp3_file = self
             .mp3_file
             .with_file_name(file_name.unwrap().to_owned() + "_enriched.mp3");
         copy(self.mp3_file.clone(), new_mp3_file.clone())?;
+
         Ok(new_mp3_file)
     }
 
@@ -94,8 +83,8 @@ impl Applier {
         values[3] = milliseconds.parse().unwrap();
 
         values
-            .iter()
-            .zip(multipliers.iter())
+            .into_iter()
+            .zip(multipliers)
             .map(|(value, multiplier)| value * multiplier)
             .sum()
     }
@@ -106,6 +95,27 @@ impl Applier {
         } else {
             duration as u32
         }
+    }
+
+    fn build_tag(cvs: AuditionCvsRecords, duration: f64) -> Tag {
+        let mut tag = Tag::new();
+        let mut chapter_ids = Vec::new();
+
+        Self::build_chapters(cvs, duration)
+            .into_iter()
+            .for_each(|chapter| {
+                chapter_ids.push(chapter.element_id.clone());
+                tag.add_frame(chapter);
+            });
+        tag.add_frame(TableOfContents {
+            element_id: "toc".to_string(),
+            top_level: true,
+            ordered: true,
+            elements: chapter_ids,
+            frames: vec![Frame::text("TIT2", "chapters-chapz".to_string()); 1],
+        });
+
+        tag
     }
 
     fn build_chapters(records: AuditionCvsRecords, duration: f64) -> Chapters {

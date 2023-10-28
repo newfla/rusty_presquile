@@ -1,13 +1,14 @@
 # Rusty Presquile
 Write podcast chapter to mp3 id3V2 tags from Adobe Audition CSV file.
 
-This repo it is none other than a Rust porting of [brainrepo/presquile](https://https://github.com/brainrepo/presquile).
+This repo it is none other than a Rust porting of [brainrepo/presquile](https://github.com/brainrepo/presquile).
 
 # Prerequisites
 See [zmwangx/metadata build dependencies ](https://github.com/zmwangx/metadata#building-from-source)
 
-# Limitations 
-Table Of Contents is not yet supported ([ID3 issue](https://github.com/polyfloyd/rust-id3/issues/99)).
+# Benchmark
+![Density](./resources/bench/pdf_small.svg)
+![Samples](./resources/bench/iteration_times_small.svg)
 
 # Usage 
 
