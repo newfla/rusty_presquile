@@ -51,16 +51,13 @@ impl Applier {
     }
 
     fn copy_file(&self) -> Result<PathBuf> {
-        let file_name = self.mp3_file.file_stem();
-        ensure!(file_name.is_some(), AppliersErrors::CopyFileError);
-
-        let file_name = file_name.unwrap().to_str();
+        let file_name = self.mp3_file.file_stem().and_then(|file| file.to_str());
         ensure!(file_name.is_some(), AppliersErrors::CopyFileError);
 
         let new_mp3_file = self
             .mp3_file
             .with_file_name(file_name.unwrap().to_owned() + "_enriched.mp3");
-        copy(self.mp3_file.clone(), new_mp3_file.clone())?;
+        copy(&self.mp3_file, &new_mp3_file)?;
 
         Ok(new_mp3_file)
     }
@@ -122,20 +119,14 @@ impl Applier {
         records
             .iter()
             .enumerate()
-            .map(|(id, record)| {
-                (
-                    id,
-                    Chapter {
-                        element_id: id.to_string(),
-                        start_time: Self::convert_time(&record.start),
-                        end_time: Self::convert_end_time(id, duration, &records),
-                        start_offset: 0,
-                        end_offset: 0,
-                        frames: vec![Frame::text("TIT2", record.name.clone()); 1],
-                    },
-                )
+            .map(|(id, record)| Chapter {
+                element_id: id.to_string(),
+                start_time: Self::convert_time(&record.start),
+                end_time: Self::convert_end_time(id, duration, &records),
+                start_offset: 0,
+                end_offset: 0,
+                frames: vec![Frame::text("TIT2", record.name.clone()); 1],
             })
-            .map(|data| data.1)
             .collect()
     }
 
