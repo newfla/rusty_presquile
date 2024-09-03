@@ -18,7 +18,14 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Dependencies
-      run: sudo apt install build-essential clang libavcodec-dev libavformat-dev libavutil-dev pkg-config
+      run: |
+        sudo add-apt-repository -y ppa:ubuntuhandbook1/ffmpeg7 \
+        && sudo apt update \
+        && sudo apt install -y ffmpeg build-essential clang libavutil-dev libavcodec-dev libavformat-dev
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt
     - name: Check Style
       run: cargo fmt --check
     - name: Build
