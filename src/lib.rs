@@ -7,11 +7,9 @@ use id3::{
 };
 use metadata::MediaFileMetadata;
 use model::AuditionCvsRecords;
-use std::{fs::copy, path::PathBuf};
+use std::{fs::copy, iter, path::PathBuf};
 
 mod model;
-
-type Chapters = Vec<Chapter>;
 
 #[derive(Debug)]
 pub enum AppliersErrors {
@@ -63,71 +61,60 @@ impl Applier {
     }
 
     fn convert_time(time: &str) -> u32 {
-        let mut values = [0u32; 4];
-        let multipliers = [60 * 60 * 1000u32, 60 * 1000, 1000, 1];
+        //Precalculate 100*(pow(60,n)) to avoid inconsistency between bench runs
+        let multipliers = [1000, 60 * 1000, 60 * 60 * 1000u32];
 
         let (hh_mm_ss, milliseconds) = time.split_once('.').unwrap();
-        let mut hh_mm_ss = hh_mm_ss.split(':');
+        let hh_mm_ss = hh_mm_ss.split(':');
 
-        if hh_mm_ss.clone().count() == 2 {
-            values[1] = hh_mm_ss.next().unwrap().parse().unwrap();
-            values[2] = hh_mm_ss.next().unwrap().parse().unwrap();
-        } else {
-            values[0] = hh_mm_ss.next().unwrap().parse().unwrap();
-            values[1] = hh_mm_ss.next().unwrap().parse().unwrap();
-            values[2] = hh_mm_ss.next().unwrap().parse().unwrap();
-        }
-        values[3] = milliseconds.parse().unwrap();
-
-        values
-            .into_iter()
-            .zip(multipliers)
-            .map(|(value, multiplier)| value * multiplier)
+        hh_mm_ss
+            .map(|v| v.parse::<u32>().unwrap())
+            .rev()
+            .enumerate()
+            .map(|(idx, val)| val * multipliers[idx])
+            .chain(iter::once(milliseconds.parse().unwrap()))
             .sum()
-    }
-
-    fn convert_end_time(id: usize, duration: f64, records: &AuditionCvsRecords) -> u32 {
-        if id < records.len() - 1 {
-            Self::convert_time(&records[id + 1].start)
-        } else {
-            duration as u32
-        }
     }
 
     fn build_tag(cvs: AuditionCvsRecords, duration: f64) -> Tag {
         let mut tag = Tag::new();
         let mut chapter_ids = Vec::new();
 
-        Self::build_chapters(cvs, duration)
-            .into_iter()
-            .for_each(|chapter| {
-                chapter_ids.push(chapter.element_id.clone());
-                tag.add_frame(chapter);
-            });
+        Self::build_chapters(cvs, duration).for_each(|chapter| {
+            chapter_ids.push(chapter.element_id.clone());
+            tag.add_frame(chapter);
+        });
         tag.add_frame(TableOfContents {
             element_id: "toc".to_string(),
             top_level: true,
             ordered: true,
             elements: chapter_ids,
-            frames: vec![Frame::text("TIT2", "chapters-chapz".to_string()); 1],
+            frames: vec![Frame::text("TIT2", "chapters-chapz"); 1],
         });
 
         tag
     }
 
-    fn build_chapters(records: AuditionCvsRecords, duration: f64) -> Chapters {
+    fn build_chapters(records: AuditionCvsRecords, duration: f64) -> impl Iterator<Item = Chapter> {
+        let mut end_time = duration as u32;
         records
-            .iter()
+            .into_iter()
             .enumerate()
-            .map(|(id, record)| Chapter {
-                element_id: id.to_string(),
-                start_time: Self::convert_time(&record.start),
-                end_time: Self::convert_end_time(id, duration, &records),
-                start_offset: 0,
-                end_offset: 0,
-                frames: vec![Frame::text("TIT2", record.name.clone()); 1],
+            .rev()
+            .map(move |(id, record)| {
+                let start_time = Self::convert_time(&record.start);
+                let ch = Chapter {
+                    element_id: id.to_string(),
+                    start_time,
+                    end_time,
+                    start_offset: 0,
+                    end_offset: 0,
+                    frames: vec![Frame::text("TIT2", record.name); 1],
+                };
+                end_time = start_time;
+                ch
             })
-            .collect()
+            .rev()
     }
 
     fn load_cvs(&self) -> Result<AuditionCvsRecords> {
