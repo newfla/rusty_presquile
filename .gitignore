@@ -15,3 +15,4 @@ Cargo.lock
 resources/test/audio_enriched.mp3
 
 bin/
+resources/test/file_enriched.mp3

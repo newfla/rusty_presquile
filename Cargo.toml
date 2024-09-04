@@ -11,6 +11,7 @@ derive-new = "0.7.0"
 id3 = "1.9.0"
 metadata = "0.1.8"
 serde = { version = "1.0.189", features = ["derive"] }
+thiserror = "1.0.63"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
@@ -18,5 +19,9 @@ criterion = { version = "0.5.1", features = ["html_reports"] }
 [workspace]
 
 [[bench]]
-name = "sample_bench"
+name = "sample_bench_seq"
+harness = false
+
+[[bench]]
+name = "sample_bench_par"
 harness = false

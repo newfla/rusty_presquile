@@ -13,6 +13,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             apply(
                 black_box(test_file!("valid_chaps.cvs").into()),
                 black_box(test_file!("audio.mp3").into()),
+                true,
             )
         })
     });
