@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use presquile::apply;
+use presquile::{apply, Mode};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -24,7 +24,7 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Apply => match apply(cli.audition_cvs, cli.mp3_file, true) {
+        Commands::Apply => match apply(cli.audition_cvs, cli.mp3_file, Mode::Sequential) {
             Ok(path) => println!("Chapters written to {:?}", path),
             Err(err) => println!("Error \"{}\" occurred", err),
         },

@@ -12,6 +12,11 @@ use thiserror::Error;
 
 mod model;
 
+pub enum Mode {
+    Sequential,
+    Parallel,
+}
+
 #[derive(Debug, Error)]
 pub enum AppliersErrors {
     #[error("Invalid audio file format {0}")]
@@ -24,11 +29,10 @@ pub enum AppliersErrors {
     ThreadInterrupted,
 }
 
-pub fn apply(audition_cvs: PathBuf, mp3_file: PathBuf, parallel: bool) -> Result<PathBuf> {
-    if parallel {
-        Applier::new(audition_cvs, mp3_file).apply_parallel()
-    } else {
-        Applier::new(audition_cvs, mp3_file).apply_seq()
+pub fn apply(audition_cvs: PathBuf, mp3_file: PathBuf, parallel: Mode) -> Result<PathBuf> {
+    match parallel {
+        Mode::Sequential => Applier::new(audition_cvs, mp3_file).apply_seq(),
+        Mode::Parallel => Applier::new(audition_cvs, mp3_file).apply_parallel(),
     }
 }
 
@@ -179,7 +183,7 @@ impl Applier {
 mod tests {
     use id3::Tag;
 
-    use crate::{apply, AppliersErrors};
+    use crate::{apply, AppliersErrors, Mode};
 
     macro_rules! test_file {
         ($file_name:expr) => {
@@ -192,7 +196,7 @@ mod tests {
         assert!(apply(
             test_file!("valid_chaps.cvs").into(),
             test_file!("file.txt").into(),
-            true,
+            Mode::Parallel,
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
@@ -205,7 +209,7 @@ mod tests {
         assert!(apply(
             test_file!("valid_chaps.cvs").into(),
             test_file!("audio.ogg").into(),
-            true,
+            Mode::Parallel,
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
@@ -218,7 +222,7 @@ mod tests {
         assert!(apply(
             test_file!("file.txt").into(),
             test_file!("audio.mp3").into(),
-            true,
+            Mode::Parallel,
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::ChaptersFileNotCompatible) => true,
@@ -231,7 +235,7 @@ mod tests {
         assert!(apply(
             test_file!("invalid_chaps.cvs").into(),
             test_file!("audio.mp3").into(),
-            true
+            Mode::Parallel,
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::ChaptersFileNotCompatible) => true,
@@ -244,7 +248,7 @@ mod tests {
         let new_mp3_file = apply(
             test_file!("valid_chaps.cvs").into(),
             test_file!("audio.mp3").into(),
-            true,
+            Mode::Parallel,
         );
         assert!(new_mp3_file.is_ok());
 
@@ -271,7 +275,7 @@ mod tests {
         assert!(apply(
             test_file!("valid_chaps.cvs").into(),
             test_file!("file.txt").into(),
-            false,
+            Mode::Sequential,
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
@@ -284,7 +288,7 @@ mod tests {
         assert!(apply(
             test_file!("valid_chaps.cvs").into(),
             test_file!("audio.ogg").into(),
-            false,
+            Mode::Sequential,
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
@@ -297,7 +301,7 @@ mod tests {
         assert!(apply(
             test_file!("file.txt").into(),
             test_file!("audio.mp3").into(),
-            false,
+            Mode::Sequential,
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::ChaptersFileNotCompatible) => true,
@@ -310,7 +314,7 @@ mod tests {
         assert!(apply(
             test_file!("invalid_chaps.cvs").into(),
             test_file!("audio.mp3").into(),
-            false
+            Mode::Sequential,
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::ChaptersFileNotCompatible) => true,
@@ -323,7 +327,7 @@ mod tests {
         let new_mp3_file = apply(
             test_file!("valid_chaps.cvs").into(),
             test_file!("audio.mp3").into(),
-            false,
+            Mode::Sequential,
         );
         assert!(new_mp3_file.is_ok());
 

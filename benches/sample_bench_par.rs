@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use presquile::apply;
+use presquile::{apply, Mode};
 
 macro_rules! test_file {
     ($file_name:expr) => {
@@ -13,7 +13,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             apply(
                 black_box(test_file!("valid_chaps.cvs").into()),
                 black_box(test_file!("audio.mp3").into()),
-                true,
+                Mode::Parallel,
             )
         })
     });
