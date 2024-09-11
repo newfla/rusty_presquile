@@ -7,31 +7,33 @@ use id3::{
 };
 use metadata::MediaFileMetadata;
 use model::AuditionCvsRecords;
-use std::{fs::copy, path::PathBuf};
+use std::{fs::copy, iter, path::PathBuf, thread};
+use thiserror::Error;
 
 mod model;
 
-type Chapters = Vec<Chapter>;
+pub enum Mode {
+    Sequential,
+    Parallel,
+}
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum AppliersErrors {
+    #[error("Invalid audio file format {0}")]
     AudioFileNotCompatible(String),
+    #[error("Invalid chapter file format")]
     ChaptersFileNotCompatible,
-    CopyFileError,
+    #[error("Error while copying file")]
+    CopyFile,
+    #[error("Thread has been interrupted")]
+    ThreadInterrupted,
 }
 
-impl std::fmt::Display for AppliersErrors {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::AudioFileNotCompatible(data) => write!(f, "Invalid audio file format {}", data),
-            Self::ChaptersFileNotCompatible => write!(f, "Invalid chapter file format"),
-            Self::CopyFileError => write!(f, "Error while copying file"),
-        }
+pub fn apply(audition_cvs: PathBuf, mp3_file: PathBuf, parallel: Mode) -> Result<PathBuf> {
+    match parallel {
+        Mode::Sequential => Applier::new(audition_cvs, mp3_file).apply_seq(),
+        Mode::Parallel => Applier::new(audition_cvs, mp3_file).apply_parallel(),
     }
-}
-
-pub fn apply(audition_cvs: PathBuf, mp3_file: PathBuf) -> Result<PathBuf> {
-    Applier::new(audition_cvs, mp3_file).apply()
 }
 
 #[derive(new)]
@@ -41,7 +43,7 @@ struct Applier {
 }
 
 impl Applier {
-    fn apply(&self) -> Result<PathBuf> {
+    fn apply_seq(&self) -> Result<PathBuf> {
         let cvs = self.load_cvs()?;
         let duration = self.verify_mp3_file()?;
         let tag = Self::build_tag(cvs, duration);
@@ -50,9 +52,29 @@ impl Applier {
         Ok(new_mp3_file)
     }
 
+    fn apply_parallel(&self) -> Result<PathBuf> {
+        use crate::AppliersErrors::ThreadInterrupted;
+
+        let (tag, new_mp3_file) = thread::scope(|s| {
+            let cvs = s.spawn(|| self.load_cvs());
+            let duration = s.spawn(|| self.verify_mp3_file());
+            let new_mp3_file = s.spawn(|| self.copy_file());
+
+            let cvs = cvs.join().map_err(|_| ThreadInterrupted)??;
+            let duration = duration.join().map_err(|_| ThreadInterrupted)??;
+
+            let tag = Self::build_tag(cvs, duration);
+            let new_mp3_file = new_mp3_file.join().map_err(|_| ThreadInterrupted)??;
+            anyhow::Ok((tag, new_mp3_file))
+        })?;
+
+        tag.write_to_path(&new_mp3_file, Version::Id3v24)?;
+        Ok(new_mp3_file)
+    }
+
     fn copy_file(&self) -> Result<PathBuf> {
         let file_name = self.mp3_file.file_stem().and_then(|file| file.to_str());
-        ensure!(file_name.is_some(), AppliersErrors::CopyFileError);
+        ensure!(file_name.is_some(), AppliersErrors::CopyFile);
 
         let new_mp3_file = self
             .mp3_file
@@ -63,71 +85,61 @@ impl Applier {
     }
 
     fn convert_time(time: &str) -> u32 {
-        let mut values = [0u32; 4];
-        let multipliers = [60 * 60 * 1000u32, 60 * 1000, 1000, 1];
+        //Precalculate 100*(pow(60,n)) to avoid inconsistency between bench runs
+        let multipliers = [1000, 60 * 1000, 60 * 60 * 1000u32];
 
         let (hh_mm_ss, milliseconds) = time.split_once('.').unwrap();
-        let mut hh_mm_ss = hh_mm_ss.split(':');
+        let hh_mm_ss = hh_mm_ss.split(':');
 
-        if hh_mm_ss.clone().count() == 2 {
-            values[1] = hh_mm_ss.next().unwrap().parse().unwrap();
-            values[2] = hh_mm_ss.next().unwrap().parse().unwrap();
-        } else {
-            values[0] = hh_mm_ss.next().unwrap().parse().unwrap();
-            values[1] = hh_mm_ss.next().unwrap().parse().unwrap();
-            values[2] = hh_mm_ss.next().unwrap().parse().unwrap();
-        }
-        values[3] = milliseconds.parse().unwrap();
-
-        values
-            .into_iter()
-            .zip(multipliers)
-            .map(|(value, multiplier)| value * multiplier)
+        hh_mm_ss
+            .map(|v| v.parse::<u32>().unwrap())
+            .rev()
+            .enumerate()
+            .map(|(idx, val)| val * multipliers[idx])
+            .chain(iter::once(milliseconds.parse().unwrap()))
             .sum()
-    }
-
-    fn convert_end_time(id: usize, duration: f64, records: &AuditionCvsRecords) -> u32 {
-        if id < records.len() - 1 {
-            Self::convert_time(&records[id + 1].start)
-        } else {
-            duration as u32
-        }
     }
 
     fn build_tag(cvs: AuditionCvsRecords, duration: f64) -> Tag {
         let mut tag = Tag::new();
-        let mut chapter_ids = Vec::new();
-
-        Self::build_chapters(cvs, duration)
-            .into_iter()
-            .for_each(|chapter| {
-                chapter_ids.push(chapter.element_id.clone());
+        let chapter_ids: Vec<_> = Self::build_chapters(cvs, duration)
+            .map(|chapter| {
+                let id = chapter.element_id.clone();
                 tag.add_frame(chapter);
-            });
+                id
+            })
+            .collect();
         tag.add_frame(TableOfContents {
             element_id: "toc".to_string(),
             top_level: true,
             ordered: true,
             elements: chapter_ids,
-            frames: vec![Frame::text("TIT2", "chapters-chapz".to_string()); 1],
+            frames: vec![Frame::text("TIT2", "chapters-chapz"); 1],
         });
 
         tag
     }
 
-    fn build_chapters(records: AuditionCvsRecords, duration: f64) -> Chapters {
+    fn build_chapters(records: AuditionCvsRecords, duration: f64) -> impl Iterator<Item = Chapter> {
+        let mut end_time = duration as u32;
         records
-            .iter()
+            .into_iter()
             .enumerate()
-            .map(|(id, record)| Chapter {
-                element_id: id.to_string(),
-                start_time: Self::convert_time(&record.start),
-                end_time: Self::convert_end_time(id, duration, &records),
-                start_offset: 0,
-                end_offset: 0,
-                frames: vec![Frame::text("TIT2", record.name.clone()); 1],
+            .rev()
+            .map(move |(id, record)| {
+                let start_time = Self::convert_time(&record.start);
+                let ch = Chapter {
+                    element_id: id.to_string(),
+                    start_time,
+                    end_time,
+                    start_offset: 0,
+                    end_offset: 0,
+                    frames: vec![Frame::text("TIT2", record.name); 1],
+                };
+                end_time = start_time;
+                ch
             })
-            .collect()
+            .rev()
     }
 
     fn load_cvs(&self) -> Result<AuditionCvsRecords> {
@@ -171,7 +183,7 @@ impl Applier {
 mod tests {
     use id3::Tag;
 
-    use crate::{apply, AppliersErrors};
+    use crate::{apply, AppliersErrors, Mode};
 
     macro_rules! test_file {
         ($file_name:expr) => {
@@ -180,10 +192,11 @@ mod tests {
     }
 
     #[test]
-    fn test_not_audio() {
+    fn test_not_audio_parallel() {
         assert!(apply(
             test_file!("valid_chaps.cvs").into(),
             test_file!("file.txt").into(),
+            Mode::Parallel,
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
@@ -192,10 +205,11 @@ mod tests {
     }
 
     #[test]
-    fn test_not_mp3_audio() {
+    fn test_not_mp3_audio_parallel() {
         assert!(apply(
             test_file!("valid_chaps.cvs").into(),
             test_file!("audio.ogg").into(),
+            Mode::Parallel,
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
@@ -204,10 +218,11 @@ mod tests {
     }
 
     #[test]
-    fn test_not_cvs() {
+    fn test_not_cvs_parallel() {
         assert!(apply(
             test_file!("file.txt").into(),
             test_file!("audio.mp3").into(),
+            Mode::Parallel,
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::ChaptersFileNotCompatible) => true,
@@ -216,10 +231,11 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_cvs() {
+    fn test_invalid_cvs_parallel() {
         assert!(apply(
             test_file!("invalid_chaps.cvs").into(),
             test_file!("audio.mp3").into(),
+            Mode::Parallel,
         )
         .is_err_and(|e| match e.downcast_ref() {
             Some(AppliersErrors::ChaptersFileNotCompatible) => true,
@@ -228,10 +244,90 @@ mod tests {
     }
 
     #[test]
-    fn test_best_case() {
+    fn test_best_case_parallel() {
         let new_mp3_file = apply(
             test_file!("valid_chaps.cvs").into(),
             test_file!("audio.mp3").into(),
+            Mode::Parallel,
+        );
+        assert!(new_mp3_file.is_ok());
+
+        let tag = Tag::read_from_path(new_mp3_file.unwrap());
+        assert!(tag.is_ok());
+        let tag = tag.unwrap();
+
+        let chapters: Vec<_> = tag.chapters().collect();
+        assert!(!chapters.is_empty());
+        println!("{:?}", chapters);
+
+        let ctocs: Vec<_> = tag.tables_of_contents().collect();
+        assert_eq!(ctocs.len(), 1);
+        println!("{:?}", ctocs);
+
+        chapters
+            .iter()
+            .zip(ctocs.last().unwrap().elements.iter())
+            .for_each(|(chap, chap_id)| assert_eq!(chap.element_id, *chap_id));
+    }
+
+    #[test]
+    fn test_not_audio_seq() {
+        assert!(apply(
+            test_file!("valid_chaps.cvs").into(),
+            test_file!("file.txt").into(),
+            Mode::Sequential,
+        )
+        .is_err_and(|e| match e.downcast_ref() {
+            Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
+            _ => false,
+        }))
+    }
+
+    #[test]
+    fn test_not_mp3_audio_seq() {
+        assert!(apply(
+            test_file!("valid_chaps.cvs").into(),
+            test_file!("audio.ogg").into(),
+            Mode::Sequential,
+        )
+        .is_err_and(|e| match e.downcast_ref() {
+            Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
+            _ => false,
+        }))
+    }
+
+    #[test]
+    fn test_not_cvs_seq() {
+        assert!(apply(
+            test_file!("file.txt").into(),
+            test_file!("audio.mp3").into(),
+            Mode::Sequential,
+        )
+        .is_err_and(|e| match e.downcast_ref() {
+            Some(AppliersErrors::ChaptersFileNotCompatible) => true,
+            _ => false,
+        }))
+    }
+
+    #[test]
+    fn test_invalid_cvs_seq() {
+        assert!(apply(
+            test_file!("invalid_chaps.cvs").into(),
+            test_file!("audio.mp3").into(),
+            Mode::Sequential,
+        )
+        .is_err_and(|e| match e.downcast_ref() {
+            Some(AppliersErrors::ChaptersFileNotCompatible) => true,
+            _ => false,
+        }))
+    }
+
+    #[test]
+    fn test_best_case_seq() {
+        let new_mp3_file = apply(
+            test_file!("valid_chaps.cvs").into(),
+            test_file!("audio.mp3").into(),
+            Mode::Sequential,
         );
         assert!(new_mp3_file.is_ok());
 
