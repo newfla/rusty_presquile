@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use presquile::{apply, Mode};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use presquile::{Mode, apply};
 
 macro_rules! test_file {
     ($file_name:expr) => {

@@ -1,9 +1,9 @@
-use anyhow::{bail, ensure, Result};
+use anyhow::{Result, bail, ensure};
 use csv::ReaderBuilder;
 use derive_new::new;
 use id3::{
-    frame::{Chapter, TableOfContents},
     Frame, Tag, TagLike, Version,
+    frame::{Chapter, TableOfContents},
 };
 use metadata::MediaFileMetadata;
 use model::AuditionCvsRecords;
@@ -183,7 +183,7 @@ impl Applier {
 mod tests {
     use id3::Tag;
 
-    use crate::{apply, AppliersErrors, Mode};
+    use crate::{AppliersErrors, Mode, apply};
 
     macro_rules! test_file {
         ($file_name:expr) => {
@@ -193,54 +193,62 @@ mod tests {
 
     #[test]
     fn test_not_audio_parallel() {
-        assert!(apply(
-            test_file!("valid_chaps.cvs").into(),
-            test_file!("file.txt").into(),
-            Mode::Parallel,
+        assert!(
+            apply(
+                test_file!("valid_chaps.cvs").into(),
+                test_file!("file.txt").into(),
+                Mode::Parallel,
+            )
+            .is_err_and(|e| match e.downcast_ref() {
+                Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
+                _ => false,
+            })
         )
-        .is_err_and(|e| match e.downcast_ref() {
-            Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
-            _ => false,
-        }))
     }
 
     #[test]
     fn test_not_mp3_audio_parallel() {
-        assert!(apply(
-            test_file!("valid_chaps.cvs").into(),
-            test_file!("audio.ogg").into(),
-            Mode::Parallel,
+        assert!(
+            apply(
+                test_file!("valid_chaps.cvs").into(),
+                test_file!("audio.ogg").into(),
+                Mode::Parallel,
+            )
+            .is_err_and(|e| match e.downcast_ref() {
+                Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
+                _ => false,
+            })
         )
-        .is_err_and(|e| match e.downcast_ref() {
-            Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
-            _ => false,
-        }))
     }
 
     #[test]
     fn test_not_cvs_parallel() {
-        assert!(apply(
-            test_file!("file.txt").into(),
-            test_file!("audio.mp3").into(),
-            Mode::Parallel,
+        assert!(
+            apply(
+                test_file!("file.txt").into(),
+                test_file!("audio.mp3").into(),
+                Mode::Parallel,
+            )
+            .is_err_and(|e| match e.downcast_ref() {
+                Some(AppliersErrors::ChaptersFileNotCompatible) => true,
+                _ => false,
+            })
         )
-        .is_err_and(|e| match e.downcast_ref() {
-            Some(AppliersErrors::ChaptersFileNotCompatible) => true,
-            _ => false,
-        }))
     }
 
     #[test]
     fn test_invalid_cvs_parallel() {
-        assert!(apply(
-            test_file!("invalid_chaps.cvs").into(),
-            test_file!("audio.mp3").into(),
-            Mode::Parallel,
+        assert!(
+            apply(
+                test_file!("invalid_chaps.cvs").into(),
+                test_file!("audio.mp3").into(),
+                Mode::Parallel,
+            )
+            .is_err_and(|e| match e.downcast_ref() {
+                Some(AppliersErrors::ChaptersFileNotCompatible) => true,
+                _ => false,
+            })
         )
-        .is_err_and(|e| match e.downcast_ref() {
-            Some(AppliersErrors::ChaptersFileNotCompatible) => true,
-            _ => false,
-        }))
     }
 
     #[test]
@@ -272,54 +280,62 @@ mod tests {
 
     #[test]
     fn test_not_audio_seq() {
-        assert!(apply(
-            test_file!("valid_chaps.cvs").into(),
-            test_file!("file.txt").into(),
-            Mode::Sequential,
+        assert!(
+            apply(
+                test_file!("valid_chaps.cvs").into(),
+                test_file!("file.txt").into(),
+                Mode::Sequential,
+            )
+            .is_err_and(|e| match e.downcast_ref() {
+                Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
+                _ => false,
+            })
         )
-        .is_err_and(|e| match e.downcast_ref() {
-            Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
-            _ => false,
-        }))
     }
 
     #[test]
     fn test_not_mp3_audio_seq() {
-        assert!(apply(
-            test_file!("valid_chaps.cvs").into(),
-            test_file!("audio.ogg").into(),
-            Mode::Sequential,
+        assert!(
+            apply(
+                test_file!("valid_chaps.cvs").into(),
+                test_file!("audio.ogg").into(),
+                Mode::Sequential,
+            )
+            .is_err_and(|e| match e.downcast_ref() {
+                Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
+                _ => false,
+            })
         )
-        .is_err_and(|e| match e.downcast_ref() {
-            Some(AppliersErrors::AudioFileNotCompatible(_)) => true,
-            _ => false,
-        }))
     }
 
     #[test]
     fn test_not_cvs_seq() {
-        assert!(apply(
-            test_file!("file.txt").into(),
-            test_file!("audio.mp3").into(),
-            Mode::Sequential,
+        assert!(
+            apply(
+                test_file!("file.txt").into(),
+                test_file!("audio.mp3").into(),
+                Mode::Sequential,
+            )
+            .is_err_and(|e| match e.downcast_ref() {
+                Some(AppliersErrors::ChaptersFileNotCompatible) => true,
+                _ => false,
+            })
         )
-        .is_err_and(|e| match e.downcast_ref() {
-            Some(AppliersErrors::ChaptersFileNotCompatible) => true,
-            _ => false,
-        }))
     }
 
     #[test]
     fn test_invalid_cvs_seq() {
-        assert!(apply(
-            test_file!("invalid_chaps.cvs").into(),
-            test_file!("audio.mp3").into(),
-            Mode::Sequential,
+        assert!(
+            apply(
+                test_file!("invalid_chaps.cvs").into(),
+                test_file!("audio.mp3").into(),
+                Mode::Sequential,
+            )
+            .is_err_and(|e| match e.downcast_ref() {
+                Some(AppliersErrors::ChaptersFileNotCompatible) => true,
+                _ => false,
+            })
         )
-        .is_err_and(|e| match e.downcast_ref() {
-            Some(AppliersErrors::ChaptersFileNotCompatible) => true,
-            _ => false,
-        }))
     }
 
     #[test]

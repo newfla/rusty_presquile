@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use presquile::{apply, Mode};
+use presquile::{Mode, apply};
 use std::path::PathBuf;
 
 #[derive(Parser)]
